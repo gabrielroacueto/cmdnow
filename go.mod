@@ -1,4 +1,4 @@
-module scriptgen
+module cmdnow
 
 go 1.23.2
 

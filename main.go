@@ -33,7 +33,6 @@ type Config struct {
 var config Config
 
 func init() {
-	// Load configuration
 	file, err := os.ReadFile("config.yaml")
 	if err != nil {
 		fmt.Println("Error reading config file: ", err)
