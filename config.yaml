@@ -1,0 +1,11 @@
+# config.yaml
+prompts:
+  generate_command: |
+    Generate a single-line {{ .Shell }} command to accomplish the following task:
+
+    {{ .UserInput }}
+
+    Format your response as follows:
+    COMMAND: <generated bash command>
+
+    Do not include any explanations or additional text. Only output the command prefixed with "COMMAND:".

@@ -3,11 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"text/template"
+
+	"gopkg.in/yaml.v3"
 )
 
 type OllamaRequest struct {
@@ -21,37 +26,96 @@ type OllamaResponse struct {
 	Response string `json:"response"`
 }
 
+type Config struct {
+	Prompts map[string]string `yaml:"prompts"`
+}
+
+var (
+	config  Config
+	verbose bool
+	logger  *log.Logger
+)
+
+func init() {
+	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging")
+	flag.Parse()
+
+	logger = log.New(os.Stdout, "", log.Ltime)
+
+	configFile, err := os.ReadFile("config.yaml")
+	if err != nil {
+		fmt.Println("Error reading config file:", err)
+		os.Exit(1)
+	}
+
+	err = yaml.Unmarshal(configFile, &config)
+	if err != nil {
+		fmt.Println("Error parsing config file:", err)
+		os.Exit(1)
+	}
+}
+
 func main() {
-	// Check if the command is "scriptgen"
 	if len(os.Args) < 2 || os.Args[1] != "scriptgen" {
 		fmt.Println("Usage: go run main.go scriptgen <prompt>")
 		os.Exit(1)
 	}
 
-	// Get the prompt from command line arguments
-	prompt := strings.Join(os.Args[2:], " ")
-
-	// Prepare the request payload
-	payload := OllamaRequest{
-		Model:  "llama3.2", // You can change this to the model you're using
-		Prompt: prompt,
-		Stream: false, // Set to false for non-streaming response
+	userInput := strings.Join(os.Args[2:], " ")
+	prompt, err := formatPrompt(userInput)
+	if err != nil {
+		fmt.Println("Error formatting prompt:", err)
+		os.Exit(1)
 	}
+
+	command, err := generateBashCommand(prompt)
+	if err != nil {
+		fmt.Println("Error generating bash command:", err)
+		os.Exit(1)
+	}
+
+	if command == "" {
+		fmt.Println("Warning: Generated command is empty.")
+	} else {
+		fmt.Println("Generated bash command:")
+		fmt.Println(command)
+	}
+}
+
+func formatPrompt(userInput string) (string, error) {
+	tmpl, err := template.New("prompt").Parse(config.Prompts["generate_command"])
+	if err != nil {
+		return "", fmt.Errorf("error parsing prompt template: %w", err)
+	}
+
+	var promptBuffer bytes.Buffer
+	err = tmpl.Execute(&promptBuffer, map[string]string{"UserInput": userInput, "Shell": "bash"})
+	if err != nil {
+		return "", fmt.Errorf("error executing prompt template: %w", err)
+	}
+
+	return promptBuffer.String(), nil
+}
+
+func generateBashCommand(prompt string) (string, error) {
+	payload := OllamaRequest{
+		Model:  "llama3.2", // Make sure this matches the model you're using
+		Prompt: prompt,
+		Stream: false,
+	}
+
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		fmt.Println("Error creating JSON payload:", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error creating JSON payload: %w", err)
 	}
 
-	// Send POST request to Ollama server
+	fmt.Println("Sending request to Ollama server...")
 	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		fmt.Println("Error sending request to Ollama server:", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error sending request to Ollama server: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Print the response status code and headers for debugging
 	fmt.Printf("Response Status: %s\n", resp.Status)
 	fmt.Println("Response Headers:")
 	for key, values := range resp.Header {
@@ -60,33 +124,42 @@ func main() {
 		}
 	}
 
-	// Read the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("Error reading response:", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error reading response body: %w", err)
 	}
 
-	// Print the raw response body for debugging
 	fmt.Println("Raw response body:")
 	fmt.Println(string(body))
 
-	// Parse the JSON response
+	if len(body) == 0 {
+		return "", fmt.Errorf("received empty response from server")
+	}
+
 	var ollamaResp OllamaResponse
 	err = json.Unmarshal(body, &ollamaResp)
 	if err != nil {
-		fmt.Println("Error parsing JSON response:", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error parsing JSON response: %w", err)
 	}
 
-	// Print the parsed response
-	fmt.Println("\nParsed response:")
+	fmt.Println("Parsed response:")
 	fmt.Printf("Model: %s\n", ollamaResp.Model)
-	fmt.Println("Generated response:")
+	fmt.Println("Response content:")
 	fmt.Println(ollamaResp.Response)
 
 	if ollamaResp.Response == "" {
-		fmt.Println("Warning: The generated response is empty.")
+		return "", fmt.Errorf("LLM returned an empty response")
 	}
+
+	return parseCommandFromResponse(ollamaResp.Response)
 }
 
+func parseCommandFromResponse(response string) (string, error) {
+	lines := strings.Split(response, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "COMMAND:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "COMMAND:")), nil
+		}
+	}
+	return "", fmt.Errorf("no command found in response")
+}
