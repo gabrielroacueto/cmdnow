@@ -71,7 +71,7 @@ Don't contribute yet. I am still working on it.
 
 ## License
 
-MIT
+MIT License
 
 ## Disclaimer
 
