@@ -50,11 +50,6 @@ func main() {
 		Name:  "scriptgen",
 		Usage: "Generate shell commands using LLM",
 		Flags: []cli.Flag{
-			&cli.BoolFlag{
-				Name:    "verbose",
-				Aliases: []string{"v"},
-				Usage:   "Enable verbose output",
-			},
 			&cli.StringFlag{
 				Name:    "shell",
 				Aliases: []string{"s"},
@@ -67,11 +62,10 @@ func main() {
 				return cli.Exit("Error: Please provide a prompt for command generation", 1)
 			}
 
-			verbose := c.Bool("verbose")
 			shell := c.String("shell")
 			userInput := strings.Join(c.Args().Slice(), " ")
 
-			return generateCommand(userInput, shell, verbose)
+			return generateCommand(userInput, shell)
 		},
 	}
 
@@ -81,7 +75,7 @@ func main() {
 	}
 }
 
-func generateCommand(userInput string, shell string, verbose bool) error {
+func generateCommand(userInput string, shell string) error {
 	prompt, err := formatPrompt(userInput, shell)
 	if err != nil {
 		return fmt.Errorf("Error formating prompt: %w", err)
