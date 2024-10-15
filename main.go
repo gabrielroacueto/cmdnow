@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/urfave/cli/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,66 +30,81 @@ type Config struct {
 	Prompts map[string]string `yaml:"prompts"`
 }
 
-var (
-	config  Config
-	verbose bool
-	logger  *log.Logger
-)
+var config Config
 
 func init() {
-	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging")
-	flag.Parse()
-
-	logger = log.New(os.Stdout, "", log.Ltime)
-
-	configFile, err := os.ReadFile("config.yaml")
+	// Load configuration
+	file, err := os.ReadFile("config.yaml")
 	if err != nil {
-		fmt.Println("Error reading config file:", err)
-		os.Exit(1)
+		fmt.Println("Error reading config file: ", err)
 	}
 
-	err = yaml.Unmarshal(configFile, &config)
+	err = yaml.Unmarshal(file, &config)
 	if err != nil {
-		fmt.Println("Error parsing config file:", err)
-		os.Exit(1)
+		fmt.Println("Error parsing config file: ", err)
 	}
 }
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "scriptgen" {
-		fmt.Println("Usage: go run main.go scriptgen <prompt>")
-		os.Exit(1)
+	app := &cli.App{
+		Name:  "scriptgen",
+		Usage: "Generate shell commands using LLM",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "verbose",
+				Aliases: []string{"v"},
+				Usage:   "Enable verbose output",
+			},
+			&cli.StringFlag{
+				Name:    "shell",
+				Aliases: []string{"s"},
+				Value:   "bash",
+				Usage:   "Specify the shell (bash, zsh, fish)",
+			},
+		},
+		Action: func(c *cli.Context) error {
+			if c.NArg() < 1 {
+				return cli.Exit("Error: Please provide a prompt for command generation", 1)
+			}
+
+			verbose := c.Bool("verbose")
+			shell := c.String("shell")
+			userInput := strings.Join(c.Args().Slice(), " ")
+
+			return generateCommand(userInput, shell, verbose)
+		},
 	}
 
-	userInput := strings.Join(os.Args[2:], " ")
-	prompt, err := formatPrompt(userInput)
+	err := app.Run(os.Args)
 	if err != nil {
-		fmt.Println("Error formatting prompt:", err)
-		os.Exit(1)
-	}
-
-	command, err := generateBashCommand(prompt)
-	if err != nil {
-		fmt.Println("Error generating bash command:", err)
-		os.Exit(1)
-	}
-
-	if command == "" {
-		fmt.Println("Warning: Generated command is empty.")
-	} else {
-		fmt.Println("Generated bash command:")
-		fmt.Println(command)
+		log.Fatal(err)
 	}
 }
 
-func formatPrompt(userInput string) (string, error) {
+func generateCommand(userInput string, shell string, verbose bool) error {
+	prompt, err := formatPrompt(userInput, shell)
+	if err != nil {
+		return fmt.Errorf("Error formating prompt: %w", err)
+	}
+
+	response, err := generateBashCommand(prompt)
+	if err != nil {
+		return fmt.Errorf("Error generating command: %w", err)
+	}
+
+	fmt.Println(response)
+
+	return nil
+}
+
+func formatPrompt(userInput string, shell string) (string, error) {
 	tmpl, err := template.New("prompt").Parse(config.Prompts["generate_command"])
 	if err != nil {
 		return "", fmt.Errorf("error parsing prompt template: %w", err)
 	}
 
 	var promptBuffer bytes.Buffer
-	err = tmpl.Execute(&promptBuffer, map[string]string{"UserInput": userInput, "Shell": "bash"})
+	err = tmpl.Execute(&promptBuffer, map[string]string{"UserInput": userInput, "Shell": shell})
 	if err != nil {
 		return "", fmt.Errorf("error executing prompt template: %w", err)
 	}
@@ -109,28 +124,16 @@ func generateBashCommand(prompt string) (string, error) {
 		return "", fmt.Errorf("error creating JSON payload: %w", err)
 	}
 
-	fmt.Println("Sending request to Ollama server...")
 	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return "", fmt.Errorf("error sending request to Ollama server: %w", err)
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("Response Status: %s\n", resp.Status)
-	fmt.Println("Response Headers:")
-	for key, values := range resp.Header {
-		for _, value := range values {
-			fmt.Printf("%s: %s\n", key, value)
-		}
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("error reading response body: %w", err)
 	}
-
-	fmt.Println("Raw response body:")
-	fmt.Println(string(body))
 
 	if len(body) == 0 {
 		return "", fmt.Errorf("received empty response from server")
@@ -141,11 +144,6 @@ func generateBashCommand(prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("error parsing JSON response: %w", err)
 	}
-
-	fmt.Println("Parsed response:")
-	fmt.Printf("Model: %s\n", ollamaResp.Model)
-	fmt.Println("Response content:")
-	fmt.Println(ollamaResp.Response)
 
 	if ollamaResp.Response == "" {
 		return "", fmt.Errorf("LLM returned an empty response")
