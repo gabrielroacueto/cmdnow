@@ -46,7 +46,7 @@ func init() {
 
 func main() {
 	app := &cli.App{
-		Name:  "scriptgen",
+		Name:  "cmdnow",
 		Usage: "Generate shell commands using LLM",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
