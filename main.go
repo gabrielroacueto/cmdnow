@@ -30,8 +30,6 @@ type Config struct {
 	Prompts map[string]string `yaml:"prompts"`
 }
 
-var config Config
-
 func main() {
 	config, err := loadConfig()
 	if err != nil {
