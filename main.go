@@ -32,19 +32,12 @@ type Config struct {
 
 var config Config
 
-func init() {
-	file, err := os.ReadFile("config.yaml")
-	if err != nil {
-		fmt.Println("Error reading config file: ", err)
-	}
-
-	err = yaml.Unmarshal(file, &config)
-	if err != nil {
-		fmt.Println("Error parsing config file: ", err)
-	}
-}
-
 func main() {
+	config, err := loadConfig()
+	if err != nil {
+		os.Exit(1)
+	}
+
 	app := &cli.App{
 		Name:  "cmdnow",
 		Usage: "Generate shell commands using LLM",
@@ -64,18 +57,35 @@ func main() {
 			shell := c.String("shell")
 			userInput := strings.Join(c.Args().Slice(), " ")
 
-			return generateCommand(userInput, shell)
+			return generateCommand(config, userInput, shell)
 		},
 	}
 
-	err := app.Run(os.Args)
+	err = app.Run(os.Args)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func generateCommand(userInput string, shell string) error {
-	prompt, err := formatPrompt(userInput, shell)
+func loadConfig() (Config, error) {
+	file, err := os.ReadFile("config.yaml")
+	if err != nil {
+		fmt.Println("Error reading config file: ", err)
+		return Config{}, err
+	}
+
+	var config Config
+	err = yaml.Unmarshal(file, &config)
+	if err != nil {
+		fmt.Println("Error parsing config file: ", err)
+		return Config{}, err
+	}
+
+	return config, nil
+}
+
+func generateCommand(config Config, userInput string, shell string) error {
+	prompt, err := formatPrompt(config, userInput, shell)
 	if err != nil {
 		return fmt.Errorf("Error formating prompt: %w", err)
 	}
@@ -90,7 +100,7 @@ func generateCommand(userInput string, shell string) error {
 	return nil
 }
 
-func formatPrompt(userInput string, shell string) (string, error) {
+func formatPrompt(config Config, userInput string, shell string) (string, error) {
 	tmpl, err := template.New("prompt").Parse(config.Prompts["generate_command"])
 	if err != nil {
 		return "", fmt.Errorf("error parsing prompt template: %w", err)
