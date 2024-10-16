@@ -18,7 +18,7 @@
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/cmdnow.git
+   git clone https://github.com/gabrielroacueto/cmdnow.git
    cd cmdnow
    ```
 
