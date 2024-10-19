@@ -41,6 +41,7 @@ Before using `cmdnow`, make sure the Ollama server is running on your local mach
 
 Options:
 - `--shell`, `-s`: Specify the shell (bash, zsh, fish). Default is bash.
+- --explain, -e: Ask the model to explain the command it just generated.
 
 Example:
 ```
