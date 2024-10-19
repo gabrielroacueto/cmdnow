@@ -1,5 +1,16 @@
 # config.yaml
 prompts:
+  explain_command: |
+    For each token in this shell command, explain what it does in bullet points.
+
+    {{ .Command }}
+    
+    Format your response as follows:
+    <explanation>
+      COMMAND_EXPLANATION
+    </explanation>
+
+    Do not include any other additional text. Just what each token of the command does and that's it.
   generate_command: |
     Generate a single-line {{ .Shell }} command to accomplish the following task:
 

@@ -30,8 +30,14 @@ type Config struct {
 	Prompts map[string]string `yaml:"prompts"`
 }
 
+type GenerateCommandOptions struct {
+	Shell         string
+	ShouldExplain bool
+}
+
 func main() {
-	config, err := loadConfig()
+	appConfig, err := loadConfig()
+
 	if err != nil {
 		os.Exit(1)
 	}
@@ -46,6 +52,12 @@ func main() {
 				Value:   "bash",
 				Usage:   "Specify the shell (bash, zsh, fish)",
 			},
+			&cli.BoolFlag{
+				Name:    "explain",
+				Aliases: []string{"e"},
+				Value:   false,
+				Usage:   "Explain the command generated.",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
@@ -53,9 +65,15 @@ func main() {
 			}
 
 			shell := c.String("shell")
+			shouldExplain := c.Bool("explain")
 			userInput := strings.Join(c.Args().Slice(), " ")
 
-			return generateCommand(config, userInput, shell)
+			command_options := GenerateCommandOptions{
+				Shell:         shell,
+				ShouldExplain: shouldExplain,
+			}
+
+			return generateCommand(userInput, appConfig, command_options)
 		},
 	}
 
@@ -82,8 +100,8 @@ func loadConfig() (Config, error) {
 	return config, nil
 }
 
-func generateCommand(config Config, userInput string, shell string) error {
-	prompt, err := formatPrompt(config, userInput, shell)
+func generateCommand(userInput string, appConfig Config, commandOptions GenerateCommandOptions) error {
+	prompt, err := generateCommandPrompt(appConfig, userInput, commandOptions.Shell)
 	if err != nil {
 		return fmt.Errorf("Error formating prompt: %w", err)
 	}
@@ -95,10 +113,33 @@ func generateCommand(config Config, userInput string, shell string) error {
 
 	fmt.Println(response)
 
+	if commandOptions.ShouldExplain == true {
+		explanationPrompt, err := generateExplainCommandPrompt(appConfig, response)
+
+		if err != nil {
+			return fmt.Errorf("Error generaing explanation prompt: %w", err)
+		}
+
+		explanationResponse, err := generateCommandExplanation(explanationPrompt)
+
+		if err != nil {
+			return fmt.Errorf("Error generating explanation from LLM: %w", err)
+		}
+
+		explanationContent, err := parseExplanationFromResponse(explanationResponse)
+
+		if err != nil {
+			return fmt.Errorf("Error parsing explanation content from response: %w", err)
+		}
+
+		fmt.Println(explanationContent)
+
+	}
+
 	return nil
 }
 
-func formatPrompt(config Config, userInput string, shell string) (string, error) {
+func generateCommandPrompt(config Config, userInput string, shell string) (string, error) {
 	tmpl, err := template.New("prompt").Parse(config.Prompts["generate_command"])
 	if err != nil {
 		return "", fmt.Errorf("error parsing prompt template: %w", err)
@@ -113,7 +154,40 @@ func formatPrompt(config Config, userInput string, shell string) (string, error)
 	return promptBuffer.String(), nil
 }
 
+func generateExplainCommandPrompt(config Config, command string) (string, error) {
+	tmpl, err := template.New("prompt").Parse(config.Prompts["explain_command"])
+	if err != nil {
+		return "", fmt.Errorf("error parsing prompt template: %w", err)
+	}
+
+	var promptBuffer bytes.Buffer
+	err = tmpl.Execute(&promptBuffer, map[string]string{"Command": command})
+	if err != nil {
+		return "", fmt.Errorf("error executing prompt template: %w", err)
+	}
+
+	return promptBuffer.String(), nil
+}
+
 func generateBashCommand(prompt string) (string, error) {
+	resp, err := ollamaGenerate(prompt)
+	if err != nil {
+		return "", fmt.Errorf("error generating prompt with ollama: %w", err)
+	}
+
+	return parseCommandFromResponse(resp)
+}
+
+func generateCommandExplanation(prompt string) (string, error) {
+	resp, err := ollamaGenerate(prompt)
+	if err != nil {
+		return "", fmt.Errorf("error generating prompt with ollama: %w", err)
+	}
+
+	return resp, nil
+}
+
+func ollamaGenerate(prompt string) (string, error) {
 	payload := OllamaRequest{
 		Model:  "llama3.2", // Make sure this matches the model you're using
 		Prompt: prompt,
@@ -150,7 +224,7 @@ func generateBashCommand(prompt string) (string, error) {
 		return "", fmt.Errorf("LLM returned an empty response")
 	}
 
-	return parseCommandFromResponse(ollamaResp.Response)
+	return ollamaResp.Response, nil
 }
 
 func parseCommandFromResponse(response string) (string, error) {
@@ -161,4 +235,29 @@ func parseCommandFromResponse(response string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no command found in response")
+}
+
+func parseExplanationFromResponse(response string) (string, error) {
+	return parseXmlContent(response, "explanation")
+}
+
+func parseXmlContent(text string, tag string) (string, error) {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+
+	startIndex := strings.Index(text, openTag)
+	if startIndex == -1 {
+		return "", fmt.Errorf("opening tag '%s' not found", tag)
+	}
+
+	// Move start index to after the opening tag
+	startIndex += len(openTag)
+
+	endIndex := strings.Index(text[startIndex:], closeTag)
+	if endIndex == -1 {
+		return "", fmt.Errorf("closing tag '%s' not found", tag)
+	}
+
+	// endIndex is relative to startIndex, so we don't need to add startIndex here
+	return text[startIndex : startIndex+endIndex], nil
 }
